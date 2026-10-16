@@ -1,0 +1,332 @@
+# Higher-Order Components (HOCs) in React + TypeScript
+
+## 1. What is a HOC?
+
+A Higher-Order Component (HOC) is a function that takes a React component and returns a new component with additional behavior or props.
+
+Think of it as a wrapper that enhances another component without modifying its original implementation.
+
+```
+const EnhancedComponent = withFeature(OriginalComponent);
+```
+
+- `OriginalComponent` — the component being enhanced.
+- `withFeature` — the HOC that adds behavior.
+- `EnhancedComponent` — the wrapped component.
+
+A HOC is a function that operates on components, not a special React API.
+
+## 2. Why do we need HOCs?
+
+Suppose multiple components need the same behavior, such as authentication checks, logging, permissions, or feature flags.
+
+Without a HOC, you might repeat the same logic in multiple components.
+
+Without a HOC
+
+`Dashboard` → authentication logic
+
+`Settings` → duplicate authentication logic
+
+`AdminPanel` → duplicate authentication logic
+
+With a HOC
+
+`withAuth(Component)`
+
+Dashboard
+
+Settings
+
+AdminPanel
+
+Shared behavior is extracted into one reusable wrapper.
+
+Common use cases:
+
+- Authorization: prevent unauthorized users from accessing a component.
+- Feature flags: show or hide features based on configuration.
+- Analytics and logging: track component-related activity.
+- Data injection: provide additional props to a component.
+- Error handling: add a boundary around a component.
+- Legacy code reuse: share behavior across existing components.
+
+A HOC is most useful when behavior needs to be reused across multiple components and a wrapper is a natural fit.
+
+## 3. A simple HOC example
+
+Imagine a component that displays a user's profile, but you want to add a loading indicator without putting loading logic inside the profile component.
+
+```
+import type { ComponentType } from "react";
+
+type WithLoadingProps = {
+  isLoading: boolean;
+};
+
+function withLoading<P extends object>(
+  WrappedComponent: ComponentType<P>
+) {
+  return function WithLoading(
+    props: P & WithLoadingProps
+  ) {
+    const { isLoading, ...rest } = props;
+
+    if (isLoading) {
+      return <p>Loading...</p>;
+    }
+
+    return (
+      <WrappedComponent {...(rest as P)} />
+    );
+  };
+}
+```
+
+Use it like this:
+
+```
+type User = {
+  name: string;
+};
+
+type UserProfileProps = {
+  user: User;
+};
+
+function UserProfile({ user }: UserProfileProps) {
+  return <h2>{user.name}</h2>;
+}
+
+const UserProfileWithLoading =
+  withLoading(UserProfile);
+
+// Usage
+<UserProfileWithLoading
+  user={{ name: "Pranay" }}
+  isLoading={false}
+/>;
+```
+
+### What does the TypeScript syntax mean?
+
+| Syntax                 | Meaning                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `ComponentType<P>`     | A React component accepting props of type `P`                                  |
+| `P extends object`     | Constrains `P` to object types                                                 |
+| `P & WithLoadingProps` | The enhanced component accepts the original props plus `isLoading`             |
+| `rest as P`            | Tells TypeScript that the remaining props match the original component's props |
+
+Important: the assertion `as P` is a typing workaround, not runtime validation. This example is useful for learning, but production HOCs should carefully type injected and consumed props to avoid unsafe assertions.
+
+## 4. A more important TypeScript pattern: injecting props
+
+One of the most useful HOC patterns is supplying a prop internally, so the caller doesn't have to pass it.
+
+For example, the HOC supplies a `user` prop.
+
+```
+import type { ComponentType } from "react";
+
+type User = {
+  id: number;
+  name: string;
+};
+
+type InjectedProps = {
+  user: User;
+};
+
+function withUser<P extends InjectedProps>(
+  WrappedComponent: ComponentType<P>
+) {
+  return function WithUser(
+    props: Omit<P, keyof InjectedProps>
+  ) {
+    const user: User = {
+      id: 1,
+      name: "Pranay",
+    };
+
+    return (
+      <WrappedComponent
+        {...props as P}
+        user={user}
+      />
+    );
+  };
+}
+```
+
+A component can then declare that it requires a `user`:
+
+```
+type GreetingProps = {
+  user: User;
+  message: string;
+};
+
+function Greeting({ user, message }: GreetingProps) {
+  return <p>{message}, {user.name}!</p>;
+}
+
+const GreetingWithUser = withUser(Greeting);
+```
+
+Usage:
+
+```
+<GreetingWithUser message="Welcome" />
+```
+
+Notice that the caller provides `message`, but not `user`. The HOC injects it.
+
+### Why use `Omit`?
+
+```
+Omit<P, "user">
+```
+
+It removes the injected `user` property from the props required by the enhanced component.
+
+This demonstrates an important TypeScript relationship:
+
+- `P` describes the original component's props.
+- `Omit<P, keyof InjectedProps>` describes the props the caller must provide.
+- The HOC supplies the omitted properties internally.
+
+Real-world caveat: a production implementation should also consider prop collisions, runtime data sources, and how the injected prop's type is preserved. Avoid spreading arbitrary values and relying on assertions as a substitute for correct typing.
+
+## 5. How generic HOCs work
+
+Generics let a HOC work with different components without losing their prop types.
+
+```
+function withLogger<P extends object>(
+  WrappedComponent: React.ComponentType<P>
+) {
+  return function LoggedComponent(props: P) {
+    console.log("Rendering component");
+
+    return <WrappedComponent {...props} />;
+  };
+}
+```
+
+Here:
+
+- `P` is inferred from the wrapped component.
+- The returned component accepts the same props as the original component.
+- You can wrap components with different prop types using the same HOC.
+
+For example:
+
+```
+type ButtonProps = {
+  label: string;
+  onClick: () => void;
+};
+
+function Button({ label, onClick }: ButtonProps) {
+  return <button onClick={onClick}>{label}</button>;
+}
+
+const LoggedButton = withLogger(Button);
+```
+
+`LoggedButton` still expects `label` and `onClick`. The HOC adds logging without changing the public props.
+
+One distinction to remember: a HOC that preserves props generally returns a component accepting `P`; a HOC that injects props often returns one accepting `Omit<P, keyof InjectedProps>`.
+
+## 6. Are HOCs an anti-pattern?
+
+No. HOCs are not inherently an anti-pattern. They are a valid React composition pattern. However, they are less often the first choice for new reusable stateful logic in modern function components.
+
+### HOCs vs custom hooks
+
+| Requirement                                      | Usually a good fit                  |
+| ------------------------------------------------ | ----------------------------------- |
+| Reuse stateful logic inside function components  | Custom hook                         |
+| Share a visual wrapper or layout                 | Composition / wrapper component     |
+| Inject props into existing components            | HOC, when the API benefits from it  |
+| Add a boundary around a subtree                  | Wrapper component or error boundary |
+| Reuse behavior across older class components     | HOC can be useful                   |
+| Reuse logic in code that isn't a React component | Ordinary function                   |
+
+Consider this example:
+
+```
+function useUser() {
+  // Reusable user-related logic
+  return { name: "Pranay" };
+}
+
+function Profile() {
+  const user = useUser();
+
+  return <p>{user.name}</p>;
+}
+
+function Settings() {
+  const user = useUser();
+
+  return <p>Settings for {user.name}</p>;
+}
+```
+
+A custom hook shares the logic while allowing each component to control its own rendering. It doesn't add an extra component wrapper.
+
+### Common problems with HOCs
+
+1. Wrapper nesting: composing many HOCs can create deeply nested component trees.
+2. Prop collisions: injected props can overwrite or conflict with caller-provided props.
+3. Harder debugging: component names and stack traces can become less clear unless display names are handled.
+4. Static properties: wrapping a component doesn't automatically copy its static properties.
+5. Ref forwarding: refs don't behave like ordinary props; a HOC may need `forwardRef` or another explicit design.
+6. Unnecessary remounting: defining a HOC inside another component can create a new component type on every render.
+
+Avoid this pattern:
+
+```
+function Page() {
+  const EnhancedProfile = withLogger(Profile);
+
+  return <EnhancedProfile />;
+}
+```
+
+Prefer defining the enhanced component at module scope:
+
+```
+const EnhancedProfile = withLogger(Profile);
+
+function Page() {
+  return <EnhancedProfile />;
+}
+```
+
+That keeps the component type stable between renders.
+
+## 7. HOCs vs hooks vs render props
+
+| Pattern      | Main idea                                   | Main trade-off                      |
+| ------------ | ------------------------------------------- | ----------------------------------- |
+| HOC          | Wrap a component with another component     | Extra wrappers and prop management  |
+| Custom hook  | Reuse logic through a function call         | Only usable where Hooks are allowed |
+| Render props | Pass a function that decides what to render | Can lead to nested callback JSX     |
+| Composition  | Combine components using children and props | May require explicit wiring         |
+
+These approaches aren't mutually exclusive. A project can use custom hooks for stateful logic, composition for UI, and HOCs where a component-level wrapper provides a useful API.
+
+## 8. Interview revision
+
+- What is a HOC? A function that takes a component and returns an enhanced component.
+- Why use it? To reuse component-level behavior without modifying the original component.
+- What does `ComponentType<P>` mean? A React component accepting props of type `P`.
+- Why use generics? To preserve the wrapped component's prop types.
+- Why use `Omit`? To remove props injected by the HOC from the caller-facing API.
+- Are HOCs an anti-pattern? No, but custom hooks are often simpler for sharing logic between modern function components.
+- What is a major HOC mistake? Creating the enhanced component inside another component's render function.
+- Can a HOC inject props? Yes, but its types should distinguish caller-provided props from injected props.
+
+One-line mental model: a HOC enhances a component from the outside; a custom hook shares logic from the inside.
